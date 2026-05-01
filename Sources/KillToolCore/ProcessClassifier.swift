@@ -132,6 +132,7 @@ public enum ProcessClassifier {
 
         if lower.contains("next dev")
             || lower.contains("/next dev")
+            || lower.contains("next-server")
             || lower.contains("vite")
             || lower.contains("astro dev")
             || lower.contains("webpack")

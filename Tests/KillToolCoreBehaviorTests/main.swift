@@ -119,6 +119,11 @@ func testKindDetectionForMCPDevServerAndDatabase() {
         "next dev should be a dev server"
     )
     expectEqual(
+        ProcessClassifier.kind(forCommandLine: "next-server (v15.5.15)"),
+        .devServer,
+        "next-server listener should be a dev server"
+    )
+    expectEqual(
         ProcessClassifier.kind(forCommandLine: "postgres -D /opt/homebrew/var/postgresql@16"),
         .database,
         "postgres should be a database"
@@ -249,6 +254,12 @@ func testProcessScannerParsesListeningPortsFromLsof() {
     expectEqual(ports[12345] ?? [], [4173, 5173], "lsof parser should sort multiple listener ports")
 }
 
+func testProcessScannerUsesIntersectionForListeningPortLsofQuery() {
+    let arguments = ProcessScanner.listeningPortLsofArguments(currentUser: "Zhuanz")
+
+    expectEqual(arguments.contains("-a"), true, "lsof listener query should intersect user and TCP filters")
+}
+
 testClaudeCodeTakesPriorityOverTerminalAncestor()
 testCodexSourceIsDetectedFromAncestorPath()
 testVSCodeSourceIsDetectedFromPtyHostAncestor()
@@ -258,5 +269,6 @@ try testProjectResolverUsesNearestProjectMarkerFromWorkingDirectory()
 try testProjectResolverInfersProjectFromCommandLinePath()
 testProcessScannerParsesPSRows()
 testProcessScannerParsesListeningPortsFromLsof()
+testProcessScannerUsesIntersectionForListeningPortLsofQuery()
 
 print("KillToolCoreBehaviorTests passed")

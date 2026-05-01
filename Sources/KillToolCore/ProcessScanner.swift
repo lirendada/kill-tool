@@ -11,7 +11,7 @@ public final class ProcessScanner {
         let now = Date()
         let psOutput = (try? run("/bin/ps", arguments: ["-axo", "pid=,ppid=,pgid=,user=,etime=,command="])) ?? ""
         let cwdOutput = (try? run("/usr/sbin/lsof", arguments: ["-nP", "-Fpcn", "-a", "-d", "cwd", "-u", currentUser])) ?? ""
-        let portOutput = (try? run("/usr/sbin/lsof", arguments: ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn", "-u", currentUser])) ?? ""
+        let portOutput = (try? run("/usr/sbin/lsof", arguments: Self.listeningPortLsofArguments(currentUser: currentUser))) ?? ""
 
         let cwdByPID = Self.parseWorkingDirectories(cwdOutput)
         let portsByPID = Self.parseListeningPorts(portOutput)
@@ -36,10 +36,16 @@ public final class ProcessScanner {
 
         return rawProcesses
             .filter { $0.user == currentUser }
-            .map { raw in
+            .map { raw -> (RawProcess, ProcessSource, ProcessKind, SafetyLevel) in
                 let source = ProcessClassifier.source(for: raw, in: rawIndex)
                 let kind = ProcessClassifier.kind(for: raw)
                 let safety = ProcessClassifier.safety(for: raw, kind: kind, currentUser: currentUser, now: now)
+                return (raw, source, kind, safety)
+            }
+            .filter { raw, source, kind, _ in
+                Self.isDevelopmentCandidate(raw: raw, source: source, kind: kind, ports: portsByPID[raw.pid] ?? [])
+            }
+            .map { raw, source, kind, safety in
                 let project = ProjectResolver.resolve(
                     workingDirectory: raw.workingDirectory,
                     commandLine: raw.commandLine
@@ -55,7 +61,6 @@ public final class ProcessScanner {
                     safety: safety
                 )
             }
-            .filter(Self.isDevelopmentProcess)
             .sorted { lhs, rhs in
                 if lhs.source.priority != rhs.source.priority {
                     return lhs.source.priority < rhs.source.priority
@@ -92,6 +97,10 @@ public final class ProcessScanner {
             workingDirectory: nil,
             startedAt: startedAt
         )
+    }
+
+    public static func listeningPortLsofArguments(currentUser: String) -> [String] {
+        ["-nP", "-a", "-iTCP", "-sTCP:LISTEN", "-Fpcn", "-u", currentUser]
     }
 
     public static func parseListeningPorts(_ output: String) -> [Int32: [Int]] {
@@ -136,22 +145,27 @@ public final class ProcessScanner {
         return directories
     }
 
-    private static func isDevelopmentProcess(_ process: DevProcess) -> Bool {
-        if !process.listeningPorts.isEmpty {
+    private static func isDevelopmentCandidate(
+        raw: RawProcess,
+        source: ProcessSource,
+        kind: ProcessKind,
+        ports: [Int]
+    ) -> Bool {
+        if !ports.isEmpty {
             return true
         }
 
-        if process.source != .unknown {
+        if source != .unknown {
             return true
         }
 
-        switch process.kind {
+        switch kind {
         case .devServer, .mcp, .worker, .database, .docker, .script:
             return true
         case .shell:
-            return process.projectName != "未识别项目"
+            return raw.workingDirectory != nil
         case .app:
-            return process.source != .unknown
+            return source != .unknown
         case .other:
             return false
         }
@@ -208,18 +222,27 @@ public final class ProcessScanner {
 
     private func run(_ executable: String, arguments: [String]) throws -> String {
         let process = Process()
-        let output = Pipe()
-        let error = Pipe()
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("killtool-\(UUID().uuidString).out")
+
+        FileManager.default.createFile(atPath: outputURL.path, contents: nil)
+        let outputHandle = try FileHandle(forWritingTo: outputURL)
+        defer {
+            try? outputHandle.close()
+            try? FileManager.default.removeItem(at: outputURL)
+        }
 
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
-        process.standardOutput = output
-        process.standardError = error
+        process.standardOutput = outputHandle
+        process.standardError = FileHandle.nullDevice
 
         try process.run()
         process.waitUntilExit()
 
-        let data = output.fileHandleForReading.readDataToEndOfFile()
+        try outputHandle.close()
+
+        let data = try Data(contentsOf: outputURL)
         return String(data: data, encoding: .utf8) ?? ""
     }
 }

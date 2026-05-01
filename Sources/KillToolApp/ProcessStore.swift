@@ -83,11 +83,22 @@ final class ProcessStore: ObservableObject {
     }
 
     func refresh() {
+        guard !isRefreshing else {
+            return
+        }
+
         isRefreshing = true
-        let scanned = scanner.scan()
-        processes = scanned
-        selectedPIDs = selectedPIDs.intersection(Set(scanned.map(\.pid)))
-        isRefreshing = false
+        let currentUser = scanner.currentUser
+
+        Task.detached(priority: .userInitiated) { [currentUser] in
+            let scanned = ProcessScanner(currentUser: currentUser).scan()
+
+            await MainActor.run {
+                self.processes = scanned
+                self.selectedPIDs = self.selectedPIDs.intersection(Set(scanned.map(\.pid)))
+                self.isRefreshing = false
+            }
+        }
     }
 
     func startAutoRefresh() {
