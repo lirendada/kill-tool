@@ -223,7 +223,7 @@ func testProjectResolverInfersProjectFromCommandLinePath() throws {
 
 func testProcessScannerParsesPSRows() {
     let now = Date(timeIntervalSince1970: 1_000)
-    let row = "39869 39849 39849 Zhuanz 02:00 node /Users/Zhuanz/sync/code/vibe-projects/my-blog/node_modules/.bin/next dev --turbopack"
+    let row = "39869 39849 39849 Zhuanz 02:00 2.5 1.2 node /Users/Zhuanz/sync/code/vibe-projects/my-blog/node_modules/.bin/next dev --turbopack"
 
     guard let raw = ProcessScanner.parsePSRow(row, now: now) else {
         fputs("FAIL: ps row should parse\n", stderr)
@@ -237,6 +237,8 @@ func testProcessScannerParsesPSRows() {
     expectEqual(raw.executableName, "node", "ps parser should derive executable name")
     expectEqual(raw.commandLine, "node /Users/Zhuanz/sync/code/vibe-projects/my-blog/node_modules/.bin/next dev --turbopack", "ps parser should preserve command line")
     expectEqual(raw.startedAt, Date(timeIntervalSince1970: 880), "ps parser should derive start time from elapsed time")
+    expectEqual(raw.cpuPercent, 2.5, "ps parser should read CPU percentage")
+    expectEqual(raw.memoryPercent, 1.2, "ps parser should read memory percentage")
 }
 
 func testProcessScannerParsesListeningPortsFromLsof() {
@@ -324,6 +326,110 @@ func testScannerExcludesPlainSourceShellButKeepsDevServer() {
     expectEqual(processes.map(\.pid), [102], "plain source shell should be hidden while dev server remains visible")
 }
 
+func makeDisplayProcess(
+    executableName: String,
+    commandLine: String,
+    projectName: String = "kill-tool",
+    kind: ProcessKind = .devServer,
+    cpuPercent: Double = 0,
+    memoryPercent: Double = 0
+) -> DevProcess {
+    DevProcess(
+        raw: RawProcess(
+            pid: 12345,
+            ppid: 1,
+            pgid: 12345,
+            user: "Zhuanz",
+            executableName: executableName,
+            commandLine: commandLine,
+            workingDirectory: "/Users/Zhuanz/sync/code/vibe-projects/\(projectName)",
+            startedAt: Date(),
+            cpuPercent: cpuPercent,
+            memoryPercent: memoryPercent
+        ),
+        projectPath: "/Users/Zhuanz/sync/code/vibe-projects/\(projectName)",
+        projectName: projectName,
+        listeningPorts: [],
+        source: .codex,
+        kind: kind,
+        safety: .safe
+    )
+}
+
+func testDisplayFormatterUsesProjectAndKindAsPrimaryTitle() {
+    let process = makeDisplayProcess(
+        executableName: "node",
+        commandLine: "node /Users/Zhuanz/sync/code/vibe-projects/kill-tool/node_modules/.bin/vite --host 0.0.0.0",
+        kind: .devServer
+    )
+
+    expectEqual(
+        ProcessDisplayFormatter.primaryTitle(for: process),
+        "kill-tool · 开发服务",
+        "primary title should prioritize project and process kind over command paths"
+    )
+}
+
+func testDisplayFormatterExtractsReadableDevelopmentCommands() {
+    let npm = makeDisplayProcess(executableName: "npm", commandLine: "npm run dev")
+    let next = makeDisplayProcess(
+        executableName: "node",
+        commandLine: "node /Users/Zhuanz/sync/code/vibe-projects/my-blog/node_modules/.bin/next dev --turbopack",
+        projectName: "my-blog"
+    )
+    let vite = makeDisplayProcess(
+        executableName: "node",
+        commandLine: "node /Users/Zhuanz/sync/code/vibe-projects/kill-tool/node_modules/.bin/vite --host 0.0.0.0"
+    )
+
+    expectEqual(ProcessDisplayFormatter.commandAction(for: npm), "npm run dev", "npm dev scripts should stay readable")
+    expectEqual(ProcessDisplayFormatter.commandAction(for: next), "next dev", "next dev should hide node_modules paths")
+    expectEqual(ProcessDisplayFormatter.commandAction(for: vite), "vite", "vite should hide node_modules paths")
+}
+
+func testDisplayFormatterExtractsMCPCommandsAndFallsBackToExecutableName() {
+    let mcp = makeDisplayProcess(
+        executableName: "node",
+        commandLine: "node /Users/Zhuanz/.npm/_npx/abc/node_modules/.bin/playwright-mcp",
+        kind: .mcp
+    )
+    let fallback = makeDisplayProcess(
+        executableName: "python3",
+        commandLine: "python3 /Users/Zhuanz/sync/code/vibe-projects/kill-tool/scripts/one-off.py",
+        kind: .script
+    )
+
+    expectEqual(ProcessDisplayFormatter.commandAction(for: mcp), "playwright-mcp", "MCP commands should use their tool name")
+    expectEqual(ProcessDisplayFormatter.commandAction(for: fallback), "python3", "unknown commands should fall back to executable name")
+}
+
+func testDisplayFormatterFormatsResourcePercentages() {
+    let process = makeDisplayProcess(
+        executableName: "node",
+        commandLine: "npm run dev",
+        cpuPercent: 2.5,
+        memoryPercent: 1.2
+    )
+
+    expectEqual(
+        ProcessDisplayFormatter.resourceSummary(for: process),
+        "CPU 2.5% · 内存 1.2%",
+        "resource summary should show CPU and memory percentages"
+    )
+}
+
+func testDisplayFormatterFormatsSeparateResourceBadges() {
+    let process = makeDisplayProcess(
+        executableName: "node",
+        commandLine: "npm run dev",
+        cpuPercent: 2.5,
+        memoryPercent: 1.2
+    )
+
+    expectEqual(ProcessDisplayFormatter.cpuBadgeText(for: process), "CPU 2.5%", "CPU badge should be independently formatted")
+    expectEqual(ProcessDisplayFormatter.memoryBadgeText(for: process), "内存 1.2%", "memory badge should be independently formatted")
+}
+
 testClaudeCodeTakesPriorityOverTerminalAncestor()
 testCodexSourceIsDetectedFromAncestorPath()
 testVSCodeSourceIsDetectedFromPtyHostAncestor()
@@ -336,5 +442,10 @@ testProcessScannerParsesListeningPortsFromLsof()
 testProcessScannerUsesIntersectionForListeningPortLsofQuery()
 testCommandRunnerTimesOutLongRunningProcess()
 testScannerExcludesPlainSourceShellButKeepsDevServer()
+testDisplayFormatterUsesProjectAndKindAsPrimaryTitle()
+testDisplayFormatterExtractsReadableDevelopmentCommands()
+testDisplayFormatterExtractsMCPCommandsAndFallsBackToExecutableName()
+testDisplayFormatterFormatsResourcePercentages()
+testDisplayFormatterFormatsSeparateResourceBadges()
 
 print("KillToolCoreBehaviorTests passed")

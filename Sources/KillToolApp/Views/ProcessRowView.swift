@@ -67,8 +67,8 @@ struct ProcessRowView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Text(commandSummary)
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    Text(primaryTitle)
+                        .font(.system(size: 12, weight: .medium))
                         .lineLimit(1)
 
                     if let portSummary {
@@ -79,12 +79,14 @@ struct ProcessRowView: View {
 
                     Spacer(minLength: 6)
 
+                    badge(cpuBadgeText, color: .purple)
+                    badge(memoryBadgeText, color: .teal)
                     badge(process.kind.displayName, color: .blue)
                     safetyBadge
                 }
 
                 HStack(spacing: 8) {
-                    Text(process.projectName)
+                    Text(commandAction)
                     Text("PID \(process.pid)")
                     Text(runtimeText)
                     Text(process.source.displayName)
@@ -98,6 +100,7 @@ struct ProcessRowView: View {
         .padding(.horizontal, 6)
         .background(rowBackground)
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .help(process.commandLine)
     }
 
     private var binding: Binding<Bool> {
@@ -107,12 +110,20 @@ struct ProcessRowView: View {
         )
     }
 
-    private var commandSummary: String {
-        let line = process.commandLine
-        if line.count <= 58 {
-            return line
-        }
-        return String(line.prefix(55)) + "..."
+    private var primaryTitle: String {
+        ProcessDisplayFormatter.primaryTitle(for: process)
+    }
+
+    private var commandAction: String {
+        ProcessDisplayFormatter.commandAction(for: process)
+    }
+
+    private var cpuBadgeText: String {
+        ProcessDisplayFormatter.cpuBadgeText(for: process)
+    }
+
+    private var memoryBadgeText: String {
+        ProcessDisplayFormatter.memoryBadgeText(for: process)
     }
 
     private var portSummary: String? {

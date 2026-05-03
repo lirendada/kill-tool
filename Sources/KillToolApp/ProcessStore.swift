@@ -25,7 +25,7 @@ struct ProcessRowItem: Identifiable {
 
 @MainActor
 final class ProcessStore: ObservableObject {
-    static let autoRefreshInterval: TimeInterval = 15
+    static let autoRefreshInterval: TimeInterval = 60
 
     @Published var processes: [DevProcess] = []
     @Published var selectedPIDs: Set<Int32> = []
@@ -66,6 +66,7 @@ final class ProcessStore: ObservableObject {
                 process.safety.displayName,
                 process.executableName,
                 process.commandLine,
+                ProcessDisplayFormatter.resourceSummary(for: process),
                 String(process.pid),
                 process.listeningPorts.map { ":\($0)" }.joined(separator: " ")
             ]

@@ -19,7 +19,7 @@ public final class ProcessScanner {
         let psOutput = capture(
             label: "ps",
             executable: "/bin/ps",
-            arguments: ["-axo", "pid=,ppid=,pgid=,user=,etime=,command="],
+            arguments: ["-axo", "pid=,ppid=,pgid=,user=,etime=,%cpu=,%mem=,command="],
             errors: &errors
         )
         let cwdOutput = capture(
@@ -69,7 +69,9 @@ public final class ProcessScanner {
                 executableName: raw.executableName,
                 commandLine: raw.commandLine,
                 workingDirectory: cwdByPID[raw.pid] ?? raw.workingDirectory,
-                startedAt: raw.startedAt
+                startedAt: raw.startedAt,
+                cpuPercent: raw.cpuPercent,
+                memoryPercent: raw.memoryPercent
             )
         }
         let rawIndex = Dictionary(uniqueKeysWithValues: rawProcesses.map { ($0.pid, $0) })
@@ -113,8 +115,8 @@ public final class ProcessScanner {
     }
 
     public static func parsePSRow(_ row: String, now: Date = Date()) -> RawProcess? {
-        let parts = row.split(separator: " ", maxSplits: 5, omittingEmptySubsequences: true)
-        guard parts.count == 6,
+        let parts = row.split(separator: " ", maxSplits: 7, omittingEmptySubsequences: true)
+        guard parts.count == 8,
               let pid = Int32(parts[0]),
               let ppid = Int32(parts[1]),
               let pgid = Int32(parts[2]) else {
@@ -123,7 +125,9 @@ public final class ProcessScanner {
 
         let user = String(parts[3])
         let elapsed = String(parts[4])
-        let commandLine = String(parts[5])
+        let cpuPercent = Double(parts[5]) ?? 0
+        let memoryPercent = Double(parts[6]) ?? 0
+        let commandLine = String(parts[7])
         let executableName = deriveExecutableName(from: commandLine)
         let startedAt = now.addingTimeInterval(-TimeInterval(parseElapsedSeconds(elapsed)))
 
@@ -135,7 +139,9 @@ public final class ProcessScanner {
             executableName: executableName,
             commandLine: commandLine,
             workingDirectory: nil,
-            startedAt: startedAt
+            startedAt: startedAt,
+            cpuPercent: cpuPercent,
+            memoryPercent: memoryPercent
         )
     }
 

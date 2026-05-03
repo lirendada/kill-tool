@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 STORE="$ROOT_DIR/Sources/KillToolApp/ProcessStore.swift"
 APP_DELEGATE="$ROOT_DIR/Sources/KillToolApp/KillToolMain.swift"
 
-grep -Fq 'static let autoRefreshInterval: TimeInterval = 15' "$STORE"
+grep -Fq 'static let autoRefreshInterval: TimeInterval = 60' "$STORE"
 grep -Fq 'Timer.scheduledTimer(withTimeInterval: Self.autoRefreshInterval' "$STORE"
 
 if grep -Fq 'store.startAutoRefresh()' "$APP_DELEGATE"; then

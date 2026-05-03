@@ -83,6 +83,8 @@ public struct RawProcess: Equatable, Identifiable, Hashable {
     public let commandLine: String
     public let workingDirectory: String?
     public let startedAt: Date
+    public let cpuPercent: Double
+    public let memoryPercent: Double
 
     public var id: Int32 { pid }
 
@@ -94,7 +96,9 @@ public struct RawProcess: Equatable, Identifiable, Hashable {
         executableName: String,
         commandLine: String,
         workingDirectory: String?,
-        startedAt: Date
+        startedAt: Date,
+        cpuPercent: Double = 0,
+        memoryPercent: Double = 0
     ) {
         self.pid = pid
         self.ppid = ppid
@@ -104,6 +108,8 @@ public struct RawProcess: Equatable, Identifiable, Hashable {
         self.commandLine = commandLine
         self.workingDirectory = workingDirectory
         self.startedAt = startedAt
+        self.cpuPercent = cpuPercent
+        self.memoryPercent = memoryPercent
     }
 }
 
@@ -122,6 +128,8 @@ public struct DevProcess: Equatable, Identifiable, Hashable {
     public var ppid: Int32 { raw.ppid }
     public var commandLine: String { raw.commandLine }
     public var executableName: String { raw.executableName }
+    public var cpuPercent: Double { raw.cpuPercent }
+    public var memoryPercent: Double { raw.memoryPercent }
 
     public init(
         raw: RawProcess,
