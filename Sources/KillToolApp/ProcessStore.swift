@@ -25,12 +25,15 @@ struct ProcessRowItem: Identifiable {
 
 @MainActor
 final class ProcessStore: ObservableObject {
+    static let autoRefreshInterval: TimeInterval = 15
+
     @Published var processes: [DevProcess] = []
     @Published var selectedPIDs: Set<Int32> = []
     @Published var query = ""
     @Published var viewMode: ProcessViewMode = .source
     @Published var isRefreshing = false
     @Published var lastActionSummary: String?
+    @Published var lastScanError: String?
 
     private let scanner: ProcessScanner
     private let controller: ProcessController
@@ -91,11 +94,12 @@ final class ProcessStore: ObservableObject {
         let currentUser = scanner.currentUser
 
         Task.detached(priority: .userInitiated) { [currentUser] in
-            let scanned = ProcessScanner(currentUser: currentUser).scan()
+            let result = ProcessScanner(currentUser: currentUser).scanDetailed()
 
             await MainActor.run {
-                self.processes = scanned
-                self.selectedPIDs = self.selectedPIDs.intersection(Set(scanned.map(\.pid)))
+                self.processes = result.processes
+                self.selectedPIDs = self.selectedPIDs.intersection(Set(result.processes.map(\.pid)))
+                self.lastScanError = result.errors.isEmpty ? nil : "扫描部分失败：\(result.errors.joined(separator: "；"))"
                 self.isRefreshing = false
             }
         }
@@ -103,7 +107,7 @@ final class ProcessStore: ObservableObject {
 
     func startAutoRefresh() {
         stopAutoRefresh()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: Self.autoRefreshInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refresh()
             }

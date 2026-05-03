@@ -45,6 +45,9 @@ struct ProcessDashboardView: View {
                     Text("\(store.processes.count) 个进程 · 已选 \(store.selectedCount) 个")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
+                    Text("每 15 秒自动刷新")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
                 }
 
                 Spacer()
@@ -105,6 +108,14 @@ struct ProcessDashboardView: View {
 
     private var actionBar: some View {
         VStack(spacing: 8) {
+            if let scanError = store.lastScanError {
+                Text(scanError)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             if let summary = store.lastActionSummary {
                 Text(summary)
                     .font(.system(size: 11))

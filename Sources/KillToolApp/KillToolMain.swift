@@ -46,8 +46,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 window.level = .floating
                 window.makeKeyAndOrderFront(nil)
             }
-            store.startAutoRefresh()
-            store.refresh()
         }
     }
 

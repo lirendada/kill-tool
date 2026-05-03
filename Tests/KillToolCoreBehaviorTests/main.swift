@@ -260,6 +260,70 @@ func testProcessScannerUsesIntersectionForListeningPortLsofQuery() {
     expectEqual(arguments.contains("-a"), true, "lsof listener query should intersect user and TCP filters")
 }
 
+func testCommandRunnerTimesOutLongRunningProcess() {
+    do {
+        _ = try ProcessCommandRunner.run(
+            executable: "/bin/sh",
+            arguments: ["-c", "sleep 2; echo done"],
+            timeoutSeconds: 0.2
+        )
+        fputs("FAIL: long-running command should time out\n", stderr)
+        Foundation.exit(1)
+    } catch ProcessCommandError.timedOut {
+        return
+    } catch {
+        fputs("FAIL: expected timeout, got \(error)\n", stderr)
+        Foundation.exit(1)
+    }
+}
+
+func testScannerExcludesPlainSourceShellButKeepsDevServer() {
+    let now = Date()
+    let terminal = RawProcess(
+        pid: 100,
+        ppid: 1,
+        pgid: 100,
+        user: "Zhuanz",
+        executableName: "Terminal",
+        commandLine: "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal",
+        workingDirectory: nil,
+        startedAt: now
+    )
+    let shell = RawProcess(
+        pid: 101,
+        ppid: 100,
+        pgid: 101,
+        user: "Zhuanz",
+        executableName: "-zsh",
+        commandLine: "-zsh",
+        workingDirectory: "/Users/Zhuanz/sync/code/vibe-projects/my-blog",
+        startedAt: now
+    )
+    let devServer = RawProcess(
+        pid: 102,
+        ppid: 101,
+        pgid: 101,
+        user: "Zhuanz",
+        executableName: "npm",
+        commandLine: "npm run dev",
+        workingDirectory: "/Users/Zhuanz/sync/code/vibe-projects/my-blog",
+        startedAt: now
+    )
+
+    let processes = ProcessScanner.classify(
+        rawProcesses: [terminal, shell, devServer],
+        cwdByPID: [
+            101: "/Users/Zhuanz/sync/code/vibe-projects/my-blog",
+            102: "/Users/Zhuanz/sync/code/vibe-projects/my-blog"
+        ],
+        portsByPID: [:],
+        currentUser: "Zhuanz",
+        now: now
+    )
+
+    expectEqual(processes.map(\.pid), [102], "plain source shell should be hidden while dev server remains visible")
+}
+
 testClaudeCodeTakesPriorityOverTerminalAncestor()
 testCodexSourceIsDetectedFromAncestorPath()
 testVSCodeSourceIsDetectedFromPtyHostAncestor()
@@ -270,5 +334,7 @@ try testProjectResolverInfersProjectFromCommandLinePath()
 testProcessScannerParsesPSRows()
 testProcessScannerParsesListeningPortsFromLsof()
 testProcessScannerUsesIntersectionForListeningPortLsofQuery()
+testCommandRunnerTimesOutLongRunningProcess()
+testScannerExcludesPlainSourceShellButKeepsDevServer()
 
 print("KillToolCoreBehaviorTests passed")

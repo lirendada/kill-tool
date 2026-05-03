@@ -2,36 +2,76 @@ import Foundation
 
 public final class ProcessScanner {
     public let currentUser: String
+    private let commandTimeoutSeconds: TimeInterval
 
-    public init(currentUser: String = NSUserName()) {
+    public init(currentUser: String = NSUserName(), commandTimeoutSeconds: TimeInterval = 2.5) {
         self.currentUser = currentUser
+        self.commandTimeoutSeconds = commandTimeoutSeconds
     }
 
     public func scan() -> [DevProcess] {
+        scanDetailed().processes
+    }
+
+    public func scanDetailed() -> ProcessScanResult {
         let now = Date()
-        let psOutput = (try? run("/bin/ps", arguments: ["-axo", "pid=,ppid=,pgid=,user=,etime=,command="])) ?? ""
-        let cwdOutput = (try? run("/usr/sbin/lsof", arguments: ["-nP", "-Fpcn", "-a", "-d", "cwd", "-u", currentUser])) ?? ""
-        let portOutput = (try? run("/usr/sbin/lsof", arguments: Self.listeningPortLsofArguments(currentUser: currentUser))) ?? ""
+        var errors: [String] = []
+        let psOutput = capture(
+            label: "ps",
+            executable: "/bin/ps",
+            arguments: ["-axo", "pid=,ppid=,pgid=,user=,etime=,command="],
+            errors: &errors
+        )
+        let cwdOutput = capture(
+            label: "cwd lsof",
+            executable: "/usr/sbin/lsof",
+            arguments: ["-nP", "-Fpcn", "-a", "-d", "cwd", "-u", currentUser],
+            errors: &errors
+        )
+        let portOutput = capture(
+            label: "port lsof",
+            executable: "/usr/sbin/lsof",
+            arguments: Self.listeningPortLsofArguments(currentUser: currentUser),
+            errors: &errors
+        )
 
         let cwdByPID = Self.parseWorkingDirectories(cwdOutput)
         let portsByPID = Self.parseListeningPorts(portOutput)
-
         let rawProcesses = psOutput
             .split(whereSeparator: \.isNewline)
             .compactMap { Self.parsePSRow(String($0), now: now) }
-            .map { raw in
-                RawProcess(
-                    pid: raw.pid,
-                    ppid: raw.ppid,
-                    pgid: raw.pgid,
-                    user: raw.user,
-                    executableName: raw.executableName,
-                    commandLine: raw.commandLine,
-                    workingDirectory: cwdByPID[raw.pid] ?? raw.workingDirectory,
-                    startedAt: raw.startedAt
-                )
-            }
 
+        return ProcessScanResult(
+            processes: Self.classify(
+                rawProcesses: rawProcesses,
+                cwdByPID: cwdByPID,
+                portsByPID: portsByPID,
+                currentUser: currentUser,
+                now: now
+            ),
+            errors: errors
+        )
+    }
+
+    public static func classify(
+        rawProcesses: [RawProcess],
+        cwdByPID: [Int32: String],
+        portsByPID: [Int32: [Int]],
+        currentUser: String,
+        now: Date
+    ) -> [DevProcess] {
+        let rawProcesses = rawProcesses.map { raw in
+            RawProcess(
+                pid: raw.pid,
+                ppid: raw.ppid,
+                pgid: raw.pgid,
+                user: raw.user,
+                executableName: raw.executableName,
+                commandLine: raw.commandLine,
+                workingDirectory: cwdByPID[raw.pid] ?? raw.workingDirectory,
+                startedAt: raw.startedAt
+            )
+        }
         let rawIndex = Dictionary(uniqueKeysWithValues: rawProcesses.map { ($0.pid, $0) })
 
         return rawProcesses
@@ -155,18 +195,10 @@ public final class ProcessScanner {
             return true
         }
 
-        if source != .unknown {
-            return true
-        }
-
         switch kind {
         case .devServer, .mcp, .worker, .database, .docker, .script:
             return true
-        case .shell:
-            return raw.workingDirectory != nil
-        case .app:
-            return source != .unknown
-        case .other:
+        case .shell, .app, .other:
             return false
         }
     }
@@ -220,29 +252,21 @@ public final class ProcessScanner {
         return Int(portPart)
     }
 
-    private func run(_ executable: String, arguments: [String]) throws -> String {
-        let process = Process()
-        let outputURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("killtool-\(UUID().uuidString).out")
-
-        FileManager.default.createFile(atPath: outputURL.path, contents: nil)
-        let outputHandle = try FileHandle(forWritingTo: outputURL)
-        defer {
-            try? outputHandle.close()
-            try? FileManager.default.removeItem(at: outputURL)
+    private func capture(
+        label: String,
+        executable: String,
+        arguments: [String],
+        errors: inout [String]
+    ) -> String {
+        do {
+            return try ProcessCommandRunner.run(
+                executable: executable,
+                arguments: arguments,
+                timeoutSeconds: commandTimeoutSeconds
+            )
+        } catch {
+            errors.append("\(label): \(error)")
+            return ""
         }
-
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        process.standardOutput = outputHandle
-        process.standardError = FileHandle.nullDevice
-
-        try process.run()
-        process.waitUntilExit()
-
-        try outputHandle.close()
-
-        let data = try Data(contentsOf: outputURL)
-        return String(data: data, encoding: .utf8) ?? ""
     }
 }
