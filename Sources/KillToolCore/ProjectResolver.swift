@@ -66,12 +66,61 @@ public enum ProjectResolver {
     }
 
     private static func absolutePaths(in commandLine: String) -> [String] {
-        commandLine
-            .split(separator: " ")
-            .map(String.init)
+        commandLineTokens(in: commandLine)
             .filter { $0.hasPrefix("/") }
-            .map { token in
-                token.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+    }
+
+    private static func commandLineTokens(in commandLine: String) -> [String] {
+        var tokens: [String] = []
+        var current = ""
+        var quote: Character?
+        var isEscaping = false
+
+        for character in commandLine {
+            if isEscaping {
+                current.append(character)
+                isEscaping = false
+                continue
             }
+
+            if character == "\\" {
+                isEscaping = true
+                continue
+            }
+
+            if let activeQuote = quote {
+                if character == activeQuote {
+                    quote = nil
+                } else {
+                    current.append(character)
+                }
+                continue
+            }
+
+            if character == "\"" || character == "'" {
+                quote = character
+                continue
+            }
+
+            if character.isWhitespace {
+                if !current.isEmpty {
+                    tokens.append(current)
+                    current = ""
+                }
+                continue
+            }
+
+            current.append(character)
+        }
+
+        if isEscaping {
+            current.append("\\")
+        }
+
+        if !current.isEmpty {
+            tokens.append(current)
+        }
+
+        return tokens
     }
 }

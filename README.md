@@ -26,6 +26,14 @@ swift build -c release
 
 产物位于 `.build/release/KillTool`。
 
+## 测试
+
+```bash
+scripts/test.sh
+```
+
+该脚本会执行 Swift 构建、核心行为测试和打包检查。
+
 ## 运行
 
 ```bash

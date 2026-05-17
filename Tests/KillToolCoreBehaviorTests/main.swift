@@ -221,6 +221,26 @@ func testProjectResolverInfersProjectFromCommandLinePath() throws {
     expectEqual(result.name, "api-server", "project name should come from argv-derived root")
 }
 
+func testProjectResolverParsesQuotedPathsContainingSpaces() throws {
+    let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("kill-tool-tests-\(UUID().uuidString)", isDirectory: true)
+    let projectRoot = temporaryRoot.appendingPathComponent("my app", isDirectory: true)
+    let binaryDirectory = projectRoot.appendingPathComponent("node_modules/.bin", isDirectory: true)
+
+    try FileManager.default.createDirectory(at: binaryDirectory, withIntermediateDirectories: true)
+    FileManager.default.createFile(
+        atPath: projectRoot.appendingPathComponent("package.json").path,
+        contents: Data("{}".utf8)
+    )
+    defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+    let commandLine = "node \"\(binaryDirectory.appendingPathComponent("vite").path)\" --host 0.0.0.0"
+    let result = ProjectResolver.resolve(workingDirectory: nil, commandLine: commandLine)
+
+    expectEqual(result.path, projectRoot.path, "quoted absolute argv path with spaces should resolve project root")
+    expectEqual(result.name, "my app", "project name should preserve spaces from resolved root")
+}
+
 func testProcessScannerParsesPSRows() {
     let now = Date(timeIntervalSince1970: 1_000)
     let row = "39869 39849 39849 Zhuanz 02:00 2.5 1.2 node /Users/Zhuanz/sync/code/vibe-projects/my-blog/node_modules/.bin/next dev --turbopack"
@@ -437,6 +457,7 @@ testKindDetectionForMCPDevServerAndDatabase()
 testSafetyLevelsProtectAppsWarnDatabasesAndAllowMCP()
 try testProjectResolverUsesNearestProjectMarkerFromWorkingDirectory()
 try testProjectResolverInfersProjectFromCommandLinePath()
+try testProjectResolverParsesQuotedPathsContainingSpaces()
 testProcessScannerParsesPSRows()
 testProcessScannerParsesListeningPortsFromLsof()
 testProcessScannerUsesIntersectionForListeningPortLsofQuery()

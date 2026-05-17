@@ -52,6 +52,14 @@ final class ProcessStore: ObservableObject {
         processes.contains { selectedPIDs.contains($0.pid) && $0.safety != .protected }
     }
 
+    var hasWarnSelected: Bool {
+        warnSelectedCount > 0
+    }
+
+    var warnSelectedCount: Int {
+        processes.filter { selectedPIDs.contains($0.pid) && $0.safety == .warn }.count
+    }
+
     var filteredProcesses: [DevProcess] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !trimmedQuery.isEmpty else {
@@ -100,7 +108,7 @@ final class ProcessStore: ObservableObject {
             await MainActor.run {
                 self.processes = result.processes
                 self.selectedPIDs = self.selectedPIDs.intersection(Set(result.processes.map(\.pid)))
-                self.lastScanError = result.errors.isEmpty ? nil : "扫描部分失败：\(result.errors.joined(separator: "；"))"
+                self.lastScanError = Self.scanErrorSummary(for: result.errors, processCount: result.processes.count)
                 self.isRefreshing = false
             }
         }
@@ -172,8 +180,25 @@ final class ProcessStore: ObservableObject {
         if failed == 0 {
             lastActionSummary = "\(verb) \(succeeded) 个进程"
         } else {
-            lastActionSummary = "\(verb) \(succeeded) 个进程，\(failed) 个失败"
+            let failedActionDetails = results
+                .filter { !$0.succeeded }
+                .map { "PID \($0.pid)：\($0.errorMessage ?? "未知错误")" }
+                .joined(separator: "；")
+            lastActionSummary = "\(verb) \(succeeded) 个进程，\(failed) 个失败：\(failedActionDetails)"
         }
+    }
+
+    private static func scanErrorSummary(for errors: [String], processCount: Int) -> String? {
+        guard !errors.isEmpty else {
+            return nil
+        }
+
+        let detail = errors.joined(separator: "；")
+        if processCount == 0, errors.contains(where: { $0.hasPrefix("ps:") }) {
+            return "扫描失败：无法读取进程列表：\(detail)"
+        }
+
+        return "部分扫描信息不可用：\(detail)"
     }
 
     private func sectionsBySource() -> [ProcessSection] {

@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ProcessDashboardView: View {
     @ObservedObject var store: ProcessStore
+    @State private var showStopConfirmation = false
     @State private var showForceKillConfirmation = false
 
     var body: some View {
@@ -21,6 +22,18 @@ struct ProcessDashboardView: View {
         }
         .onDisappear {
             store.stopAutoRefresh()
+        }
+        .confirmationDialog(
+            "停止谨慎进程？",
+            isPresented: $showStopConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("停止", role: .destructive) {
+                store.stopSelected()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("已选进程包含 \(store.warnSelectedCount) 个谨慎进程。")
         }
         .confirmationDialog(
             "强制结束已选进程？",
@@ -125,7 +138,11 @@ struct ProcessDashboardView: View {
 
             HStack(spacing: 8) {
                 Button("停止所选") {
-                    store.stopSelected()
+                    if store.hasWarnSelected {
+                        showStopConfirmation = true
+                    } else {
+                        store.stopSelected()
+                    }
                 }
                 .disabled(!store.canStopSelected)
 
