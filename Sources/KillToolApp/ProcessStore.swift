@@ -35,11 +35,11 @@ final class ProcessStore: ObservableObject {
     @Published var lastActionSummary: String?
     @Published var lastScanError: String?
 
-    private let scanner: ProcessScanner
+    private let scanner: any ProcessScanning
     private let controller: ProcessController
     private var refreshTimer: Timer?
 
-    init(scanner: ProcessScanner = ProcessScanner(), controller: ProcessController = ProcessController()) {
+    init(scanner: any ProcessScanning = ProcessScanner(), controller: ProcessController = ProcessController()) {
         self.scanner = scanner
         self.controller = controller
     }
@@ -92,10 +92,10 @@ final class ProcessStore: ObservableObject {
         }
 
         isRefreshing = true
-        let currentUser = scanner.currentUser
+        let scanner = scanner
 
-        Task.detached(priority: .userInitiated) { [currentUser] in
-            let result = ProcessScanner(currentUser: currentUser).scanDetailed()
+        Task.detached(priority: .userInitiated) {
+            let result = scanner.scanDetailed()
 
             await MainActor.run {
                 self.processes = result.processes

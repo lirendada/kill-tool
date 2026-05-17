@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-public enum ProcessCommandError: Error, Equatable, CustomStringConvertible {
+public enum ProcessCommandError: Error, Equatable, CustomStringConvertible, Sendable {
     case timedOut
 
     public var description: String {

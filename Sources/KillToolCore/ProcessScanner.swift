@@ -1,8 +1,24 @@
 import Foundation
 
-public final class ProcessScanner {
+public protocol ProcessScanning: Sendable {
+    var currentUser: String { get }
+    func scanDetailed() -> ProcessScanResult
+}
+
+public final class ProcessScanner: @unchecked Sendable, ProcessScanning {
     public let currentUser: String
     private let commandTimeoutSeconds: TimeInterval
+
+    private struct CaptureRequest: Sendable {
+        let label: String
+        let executable: String
+        let arguments: [String]
+    }
+
+    private struct CaptureResult: Sendable {
+        let output: String
+        let error: String?
+    }
 
     public init(currentUser: String = NSUserName(), commandTimeoutSeconds: TimeInterval = 2.5) {
         self.currentUser = currentUser
@@ -15,25 +31,28 @@ public final class ProcessScanner {
 
     public func scanDetailed() -> ProcessScanResult {
         let now = Date()
-        var errors: [String] = []
-        let psOutput = capture(
-            label: "ps",
-            executable: "/bin/ps",
-            arguments: ["-axo", "pid=,ppid=,pgid=,user=,etime=,%cpu=,%mem=,command="],
-            errors: &errors
-        )
-        let cwdOutput = capture(
-            label: "cwd lsof",
-            executable: "/usr/sbin/lsof",
-            arguments: ["-nP", "-Fpcn", "-a", "-d", "cwd", "-u", currentUser],
-            errors: &errors
-        )
-        let portOutput = capture(
-            label: "port lsof",
-            executable: "/usr/sbin/lsof",
-            arguments: Self.listeningPortLsofArguments(currentUser: currentUser),
-            errors: &errors
-        )
+        let captures = captureAll([
+            CaptureRequest(
+                label: "ps",
+                executable: "/bin/ps",
+                arguments: ["-axo", "pid=,ppid=,pgid=,user=,etime=,%cpu=,%mem=,command="]
+            ),
+            CaptureRequest(
+                label: "cwd lsof",
+                executable: "/usr/sbin/lsof",
+                arguments: ["-nP", "-Fpcn", "-a", "-d", "cwd", "-u", currentUser]
+            ),
+            CaptureRequest(
+                label: "port lsof",
+                executable: "/usr/sbin/lsof",
+                arguments: Self.listeningPortLsofArguments(currentUser: currentUser)
+            )
+        ])
+
+        let psOutput = captures[0].output
+        let cwdOutput = captures[1].output
+        let portOutput = captures[2].output
+        let errors = captures.compactMap(\.error)
 
         let cwdByPID = Self.parseWorkingDirectories(cwdOutput)
         let portsByPID = Self.parseListeningPorts(portOutput)
@@ -258,21 +277,39 @@ public final class ProcessScanner {
         return Int(portPart)
     }
 
-    private func capture(
-        label: String,
-        executable: String,
-        arguments: [String],
-        errors: inout [String]
-    ) -> String {
+    private func captureAll(_ requests: [CaptureRequest]) -> [CaptureResult] {
+        var results = Array(
+            repeating: CaptureResult(output: "", error: nil),
+            count: requests.count
+        )
+        let group = DispatchGroup()
+        let lock = NSLock()
+
+        for (index, request) in requests.enumerated() {
+            group.enter()
+            DispatchQueue.global(qos: .utility).async { [self] in
+                let result = self.capture(request)
+                lock.lock()
+                results[index] = result
+                lock.unlock()
+                group.leave()
+            }
+        }
+
+        group.wait()
+        return results
+    }
+
+    private func capture(_ request: CaptureRequest) -> CaptureResult {
         do {
-            return try ProcessCommandRunner.run(
-                executable: executable,
-                arguments: arguments,
+            let output = try ProcessCommandRunner.run(
+                executable: request.executable,
+                arguments: request.arguments,
                 timeoutSeconds: commandTimeoutSeconds
             )
+            return CaptureResult(output: output, error: nil)
         } catch {
-            errors.append("\(label): \(error)")
-            return ""
+            return CaptureResult(output: "", error: "\(request.label): \(error)")
         }
     }
 }

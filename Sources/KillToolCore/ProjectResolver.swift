@@ -1,6 +1,6 @@
 import Foundation
 
-public struct ProjectIdentity: Equatable, Hashable {
+public struct ProjectIdentity: Equatable, Hashable, Sendable {
     public let path: String
     public let name: String
 

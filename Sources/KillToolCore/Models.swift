@@ -1,6 +1,6 @@
 import Foundation
 
-public enum ProcessSource: String, CaseIterable, Equatable, Hashable, Identifiable {
+public enum ProcessSource: String, CaseIterable, Equatable, Hashable, Identifiable, Sendable {
     case claudeCode
     case codex
     case vsCode
@@ -30,7 +30,7 @@ public enum ProcessSource: String, CaseIterable, Equatable, Hashable, Identifiab
     }
 }
 
-public enum ProcessKind: String, Equatable, Hashable, Identifiable {
+public enum ProcessKind: String, Equatable, Hashable, Identifiable, Sendable {
     case devServer
     case mcp
     case worker
@@ -58,7 +58,7 @@ public enum ProcessKind: String, Equatable, Hashable, Identifiable {
     }
 }
 
-public enum SafetyLevel: String, Equatable, Hashable, Identifiable {
+public enum SafetyLevel: String, Equatable, Hashable, Identifiable, Sendable {
     case safe
     case warn
     case protected
@@ -74,7 +74,7 @@ public enum SafetyLevel: String, Equatable, Hashable, Identifiable {
     }
 }
 
-public struct RawProcess: Equatable, Identifiable, Hashable {
+public struct RawProcess: Equatable, Identifiable, Hashable, Sendable {
     public let pid: Int32
     public let ppid: Int32
     public let pgid: Int32
@@ -113,7 +113,7 @@ public struct RawProcess: Equatable, Identifiable, Hashable {
     }
 }
 
-public struct DevProcess: Equatable, Identifiable, Hashable {
+public struct DevProcess: Equatable, Identifiable, Hashable, Sendable {
     public let raw: RawProcess
     public let projectPath: String?
     public let projectName: String

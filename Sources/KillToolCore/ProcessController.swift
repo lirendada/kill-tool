@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-public enum ProcessSignal: Equatable {
+public enum ProcessSignal: Equatable, Sendable {
     case terminate
     case kill
 
@@ -13,7 +13,7 @@ public enum ProcessSignal: Equatable {
     }
 }
 
-public struct ProcessActionResult: Equatable, Identifiable {
+public struct ProcessActionResult: Equatable, Identifiable, Sendable {
     public let pid: Int32
     public let signal: ProcessSignal
     public let succeeded: Bool

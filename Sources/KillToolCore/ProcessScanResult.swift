@@ -1,4 +1,4 @@
-public struct ProcessScanResult: Equatable {
+public struct ProcessScanResult: Equatable, Sendable {
     public let processes: [DevProcess]
     public let errors: [String]
 
