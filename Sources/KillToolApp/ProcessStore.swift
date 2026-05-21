@@ -155,14 +155,14 @@ final class ProcessStore: ObservableObject {
 
     func stopSelected() {
         let targets = selectedActionableProcesses()
-        let results = targets.map { controller.stop(pid: $0.pid) }
+        let results = targets.map { controller.stop(process: $0) }
         summarize(results, verb: "停止")
         refresh()
     }
 
     func forceKillSelected() {
         let targets = selectedActionableProcesses()
-        let results = targets.map { controller.forceKill(pid: $0.pid) }
+        let results = targets.map { controller.forceKill(process: $0) }
         summarize(results, verb: "强制结束")
         refresh()
     }

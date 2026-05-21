@@ -299,6 +299,57 @@ func testCommandRunnerTimesOutLongRunningProcess() {
     }
 }
 
+func testCommandRunnerReportsNonZeroExitWithErrorSummary() {
+    do {
+        _ = try ProcessCommandRunner.run(
+            executable: "/bin/sh",
+            arguments: ["-c", "echo missing-access >&2; exit 7"],
+            timeoutSeconds: 1
+        )
+        fputs("FAIL: failed command should report non-zero exit\n", stderr)
+        Foundation.exit(1)
+    } catch ProcessCommandError.failed(let exitCode, let errorSummary) {
+        expectEqual(exitCode, 7, "failed command should preserve exit code")
+        expectEqual(errorSummary, "missing-access", "failed command should summarize stderr")
+    } catch {
+        fputs("FAIL: expected failed command error, got \(error)\n", stderr)
+        Foundation.exit(1)
+    }
+}
+
+private final class RejectingProcessIdentityVerifier: ProcessIdentityVerifying, @unchecked Sendable {
+    func matches(_ process: RawProcess) -> Bool {
+        false
+    }
+}
+
+private final class RecordingProcessSignalSender: ProcessSignalSending, @unchecked Sendable {
+    private(set) var sentSignals: [(ProcessSignal, Int32)] = []
+
+    func send(_ signal: ProcessSignal, to pid: Int32) -> ProcessActionResult {
+        sentSignals.append((signal, pid))
+        return ProcessActionResult(pid: pid, signal: signal, succeeded: true, errorMessage: nil)
+    }
+}
+
+func testProcessControllerSkipsSignalWhenProcessIdentityChanges() {
+    let sender = RecordingProcessSignalSender()
+    let controller = ProcessController(
+        identityVerifier: RejectingProcessIdentityVerifier(),
+        signalSender: sender
+    )
+    let process = makeDisplayProcess(
+        executableName: "node",
+        commandLine: "node node_modules/.bin/vite"
+    )
+
+    let result = controller.stop(process: process)
+
+    expectEqual(result.succeeded, false, "changed processes should not be stopped")
+    expectEqual(result.errorMessage, "进程身份已变化，请刷新后重试", "changed processes should require a fresh scan")
+    expectEqual(sender.sentSignals.count, 0, "identity mismatch should not send a signal")
+}
+
 func testScannerExcludesPlainSourceShellButKeepsDevServer() {
     let now = Date()
     let terminal = RawProcess(
@@ -462,7 +513,9 @@ testProcessScannerParsesPSRows()
 testProcessScannerParsesListeningPortsFromLsof()
 testProcessScannerUsesIntersectionForListeningPortLsofQuery()
 testCommandRunnerTimesOutLongRunningProcess()
+testCommandRunnerReportsNonZeroExitWithErrorSummary()
 testScannerExcludesPlainSourceShellButKeepsDevServer()
+testProcessControllerSkipsSignalWhenProcessIdentityChanges()
 testDisplayFormatterUsesProjectAndKindAsPrimaryTitle()
 testDisplayFormatterExtractsReadableDevelopmentCommands()
 testDisplayFormatterExtractsMCPCommandsAndFallsBackToExecutableName()
