@@ -81,9 +81,9 @@ struct ProcessDashboardView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 140)
+                .frame(width: 210)
 
-                TextField("搜索进程、端口或项目", text: $store.query)
+                TextField("搜索进程、端口、分类或项目", text: $store.query)
                     .textFieldStyle(.roundedBorder)
             }
         }

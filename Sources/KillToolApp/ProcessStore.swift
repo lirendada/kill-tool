@@ -5,6 +5,7 @@ import KillToolCore
 enum ProcessViewMode: String, CaseIterable, Identifiable {
     case source = "来源"
     case project = "项目"
+    case port = "端口"
 
     var id: String { rawValue }
 }
@@ -76,7 +77,12 @@ final class ProcessStore: ObservableObject {
                 process.commandLine,
                 ProcessDisplayFormatter.resourceSummary(for: process),
                 String(process.pid),
-                process.listeningPorts.map { ":\($0)" }.joined(separator: " ")
+                process.listeningPorts.map { ":\($0)" }.joined(separator: " "),
+                process.listeningPortDetails
+                    .map {
+                        "\($0.endpoint) \(PortCategory.classify(port: $0, processKind: process.kind).displayName)"
+                    }
+                    .joined(separator: " ")
             ]
             .joined(separator: " ")
             .lowercased()
@@ -91,6 +97,8 @@ final class ProcessStore: ObservableObject {
             return sectionsBySource()
         case .project:
             return sectionsByProject()
+        case .port:
+            return sectionsByPort()
         }
     }
 
@@ -230,6 +238,40 @@ final class ProcessStore: ObservableObject {
             }
     }
 
+    private func sectionsByPort() -> [ProcessSection] {
+        PortCategory.allCases
+            .sorted { $0.priority < $1.priority }
+            .compactMap { category in
+                let items = filteredProcesses
+                    .filter { portCategories(for: $0).contains(category) }
+                    .sorted { lhs, rhs in
+                        let lhsPort = firstPort(in: category, for: lhs) ?? Int.max
+                        let rhsPort = firstPort(in: category, for: rhs) ?? Int.max
+                        if lhsPort != rhsPort {
+                            return lhsPort < rhsPort
+                        }
+                        return lhs.pid < rhs.pid
+                    }
+
+                guard !items.isEmpty else {
+                    return nil
+                }
+
+                let portCount = items.reduce(0) { partialResult, process in
+                    partialResult + process.listeningPortDetails.filter {
+                        PortCategory.classify(port: $0, processKind: process.kind) == category
+                    }.count
+                }
+
+                return ProcessSection(
+                    id: "port-\(category.rawValue)",
+                    title: category.displayName,
+                    subtitle: "\(portCount) 个端口 · \(items.count) 个进程",
+                    rows: items.map { ProcessRowItem(process: $0, depth: 0) }
+                )
+            }
+    }
+
     private func treeRows(for items: [DevProcess]) -> [ProcessRowItem] {
         let processIDs = Set(items.map(\.pid))
         let childrenByParent = Dictionary(grouping: items, by: \.ppid)
@@ -267,5 +309,18 @@ final class ProcessStore: ObservableObject {
         }
 
         return rows
+    }
+
+    private func portCategories(for process: DevProcess) -> Set<PortCategory> {
+        Set(process.listeningPortDetails.map {
+            PortCategory.classify(port: $0, processKind: process.kind)
+        })
+    }
+
+    private func firstPort(in category: PortCategory, for process: DevProcess) -> Int? {
+        process.listeningPortDetails
+            .filter { PortCategory.classify(port: $0, processKind: process.kind) == category }
+            .map(\.port)
+            .min()
     }
 }

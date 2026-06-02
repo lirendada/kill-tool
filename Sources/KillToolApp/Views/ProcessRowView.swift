@@ -127,10 +127,14 @@ struct ProcessRowView: View {
     }
 
     private var portSummary: String? {
-        guard !process.listeningPorts.isEmpty else {
+        guard !process.listeningPortDetails.isEmpty else {
             return nil
         }
-        return process.listeningPorts.map { ":\($0)" }.joined(separator: ", ")
+        return process.listeningPortDetails
+            .map { port in
+                port.endpoint.hasPrefix(":") ? ":\(port.port)" : port.endpoint
+            }
+            .joined(separator: ", ")
     }
 
     private var runtimeText: String {

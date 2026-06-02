@@ -276,6 +276,55 @@ func testProcessScannerParsesListeningPortsFromLsof() {
     expectEqual(ports[12345] ?? [], [4173, 5173], "lsof parser should sort multiple listener ports")
 }
 
+func testProcessScannerParsesListeningPortDetailsFromLsof() {
+    let output = """
+    p39869
+    n*:3000
+    p12345
+    n127.0.0.1:5173
+    n[::1]:4173
+    """
+
+    let ports = ProcessScanner.parseListeningPortDetails(output)
+
+    expectEqual(
+        ports[39869] ?? [],
+        [ListeningPort(port: 3000, endpoint: "*:3000")],
+        "lsof parser should preserve wildcard listener endpoint"
+    )
+    expectEqual(
+        ports[12345] ?? [],
+        [
+            ListeningPort(port: 4173, endpoint: "[::1]:4173"),
+            ListeningPort(port: 5173, endpoint: "127.0.0.1:5173")
+        ],
+        "lsof parser should preserve listener endpoints sorted by port"
+    )
+}
+
+func testPortCategoryClassifiesListenersForKillWorkflow() {
+    expectEqual(
+        PortCategory.classify(port: ListeningPort(port: 80, endpoint: "127.0.0.1:80"), processKind: .devServer),
+        .protected,
+        "low ports should be separated as protected"
+    )
+    expectEqual(
+        PortCategory.classify(port: ListeningPort(port: 5173, endpoint: "127.0.0.1:5173"), processKind: .devServer),
+        .devService,
+        "local dev server listeners should be development service ports"
+    )
+    expectEqual(
+        PortCategory.classify(port: ListeningPort(port: 5432, endpoint: "127.0.0.1:5432"), processKind: .other),
+        .database,
+        "known database ports should be grouped as database ports"
+    )
+    expectEqual(
+        PortCategory.classify(port: ListeningPort(port: 3000, endpoint: "*:3000"), processKind: .devServer),
+        .exposed,
+        "wildcard listeners should be highlighted as exposed ports"
+    )
+}
+
 func testProcessScannerUsesIntersectionForListeningPortLsofQuery() {
     let arguments = ProcessScanner.listeningPortLsofArguments(currentUser: "Zhuanz")
 
@@ -397,6 +446,32 @@ func testScannerExcludesPlainSourceShellButKeepsDevServer() {
     expectEqual(processes.map(\.pid), [102], "plain source shell should be hidden while dev server remains visible")
 }
 
+func testScannerKeepsListeningPortDetailsOnClassifiedProcess() {
+    let now = Date()
+    let devServer = RawProcess(
+        pid: 102,
+        ppid: 1,
+        pgid: 102,
+        user: "Zhuanz",
+        executableName: "npm",
+        commandLine: "npm run dev",
+        workingDirectory: "/Users/Zhuanz/sync/code/vibe-projects/my-blog",
+        startedAt: now
+    )
+    let listener = ListeningPort(port: 5173, endpoint: "127.0.0.1:5173")
+
+    let processes = ProcessScanner.classify(
+        rawProcesses: [devServer],
+        cwdByPID: [:],
+        listeningPortsByPID: [102: [listener]],
+        currentUser: "Zhuanz",
+        now: now
+    )
+
+    expectEqual(processes.first?.listeningPorts, [5173], "classified process should keep listener port numbers")
+    expectEqual(processes.first?.listeningPortDetails, [listener], "classified process should keep listener endpoint details")
+}
+
 func makeDisplayProcess(
     executableName: String,
     commandLine: String,
@@ -511,10 +586,13 @@ try testProjectResolverInfersProjectFromCommandLinePath()
 try testProjectResolverParsesQuotedPathsContainingSpaces()
 testProcessScannerParsesPSRows()
 testProcessScannerParsesListeningPortsFromLsof()
+testProcessScannerParsesListeningPortDetailsFromLsof()
+testPortCategoryClassifiesListenersForKillWorkflow()
 testProcessScannerUsesIntersectionForListeningPortLsofQuery()
 testCommandRunnerTimesOutLongRunningProcess()
 testCommandRunnerReportsNonZeroExitWithErrorSummary()
 testScannerExcludesPlainSourceShellButKeepsDevServer()
+testScannerKeepsListeningPortDetailsOnClassifiedProcess()
 testProcessControllerSkipsSignalWhenProcessIdentityChanges()
 testDisplayFormatterUsesProjectAndKindAsPrimaryTitle()
 testDisplayFormatterExtractsReadableDevelopmentCommands()

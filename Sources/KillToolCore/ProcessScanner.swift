@@ -55,7 +55,7 @@ public final class ProcessScanner: @unchecked Sendable, ProcessScanning {
         let errors = captures.compactMap(\.error)
 
         let cwdByPID = Self.parseWorkingDirectories(cwdOutput)
-        let portsByPID = Self.parseListeningPorts(portOutput)
+        let listeningPortsByPID = Self.parseListeningPortDetails(portOutput)
         let rawProcesses = psOutput
             .split(whereSeparator: \.isNewline)
             .compactMap { Self.parsePSRow(String($0), now: now) }
@@ -64,7 +64,7 @@ public final class ProcessScanner: @unchecked Sendable, ProcessScanning {
             processes: Self.classify(
                 rawProcesses: rawProcesses,
                 cwdByPID: cwdByPID,
-                portsByPID: portsByPID,
+                listeningPortsByPID: listeningPortsByPID,
                 currentUser: currentUser,
                 now: now
             ),
@@ -76,6 +76,26 @@ public final class ProcessScanner: @unchecked Sendable, ProcessScanning {
         rawProcesses: [RawProcess],
         cwdByPID: [Int32: String],
         portsByPID: [Int32: [Int]],
+        currentUser: String,
+        now: Date
+    ) -> [DevProcess] {
+        let listeningPortsByPID = portsByPID.mapValues { ports in
+            ports.map { ListeningPort(port: $0, endpoint: ":\($0)") }
+        }
+
+        return classify(
+            rawProcesses: rawProcesses,
+            cwdByPID: cwdByPID,
+            listeningPortsByPID: listeningPortsByPID,
+            currentUser: currentUser,
+            now: now
+        )
+    }
+
+    public static func classify(
+        rawProcesses: [RawProcess],
+        cwdByPID: [Int32: String],
+        listeningPortsByPID: [Int32: [ListeningPort]],
         currentUser: String,
         now: Date
     ) -> [DevProcess] {
@@ -104,19 +124,26 @@ public final class ProcessScanner: @unchecked Sendable, ProcessScanning {
                 return (raw, source, kind, safety)
             }
             .filter { raw, source, kind, _ in
-                Self.isDevelopmentCandidate(raw: raw, source: source, kind: kind, ports: portsByPID[raw.pid] ?? [])
+                Self.isDevelopmentCandidate(
+                    raw: raw,
+                    source: source,
+                    kind: kind,
+                    ports: listeningPortsByPID[raw.pid, default: []].map(\.port)
+                )
             }
             .map { raw, source, kind, safety in
                 let project = ProjectResolver.resolve(
                     workingDirectory: raw.workingDirectory,
                     commandLine: raw.commandLine
                 )
+                let listeningPortDetails = listeningPortsByPID[raw.pid, default: []]
 
                 return DevProcess(
                     raw: raw,
                     projectPath: project.path.isEmpty ? nil : project.path,
                     projectName: project.name,
-                    listeningPorts: portsByPID[raw.pid] ?? [],
+                    listeningPorts: listeningPortDetails.map(\.port),
+                    listeningPortDetails: listeningPortDetails,
                     source: source,
                     kind: kind,
                     safety: safety
@@ -169,8 +196,15 @@ public final class ProcessScanner: @unchecked Sendable, ProcessScanning {
     }
 
     public static func parseListeningPorts(_ output: String) -> [Int32: [Int]] {
+        parseListeningPortDetails(output)
+            .mapValues { ports in
+                Array(Set(ports.map(\.port))).sorted()
+            }
+    }
+
+    public static func parseListeningPortDetails(_ output: String) -> [Int32: [ListeningPort]] {
         var currentPID: Int32?
-        var portsByPID: [Int32: Set<Int>] = [:]
+        var portsByPID: [Int32: Set<ListeningPort>] = [:]
 
         for line in output.split(whereSeparator: \.isNewline).map(String.init) {
             if line.hasPrefix("p"), let pid = Int32(line.dropFirst()) {
@@ -182,12 +216,20 @@ public final class ProcessScanner: @unchecked Sendable, ProcessScanning {
                 continue
             }
 
-            if let port = parsePort(from: String(line.dropFirst())) {
-                portsByPID[pid, default: []].insert(port)
+            let endpoint = String(line.dropFirst())
+            if let port = parsePort(from: endpoint) {
+                portsByPID[pid, default: []].insert(ListeningPort(port: port, endpoint: endpoint))
             }
         }
 
-        return portsByPID.mapValues { $0.sorted() }
+        return portsByPID.mapValues {
+            $0.sorted { lhs, rhs in
+                if lhs.port != rhs.port {
+                    return lhs.port < rhs.port
+                }
+                return lhs.endpoint.localizedCaseInsensitiveCompare(rhs.endpoint) == .orderedAscending
+            }
+        }
     }
 
     public static func parseWorkingDirectories(_ output: String) -> [Int32: String] {

@@ -74,6 +74,91 @@ public enum SafetyLevel: String, Equatable, Hashable, Identifiable, Sendable {
     }
 }
 
+public struct ListeningPort: Equatable, Hashable, Sendable {
+    public let port: Int
+    public let endpoint: String
+
+    public init(port: Int, endpoint: String) {
+        self.port = port
+        self.endpoint = endpoint
+    }
+
+    public var isWildcard: Bool {
+        let normalized = endpoint.lowercased()
+        return normalized.hasPrefix("*:")
+            || normalized.hasPrefix("0.0.0.0:")
+            || normalized.hasPrefix("[::]:")
+    }
+
+    public var isLocalOnly: Bool {
+        let normalized = endpoint.lowercased()
+        return normalized.hasPrefix("127.")
+            || normalized.hasPrefix("localhost:")
+            || normalized.hasPrefix("[::1]:")
+            || normalized.hasPrefix("::1:")
+    }
+}
+
+public enum PortCategory: String, CaseIterable, Equatable, Hashable, Identifiable, Sendable {
+    case protected
+    case exposed
+    case devService
+    case database
+    case local
+    case other
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .protected: "低位保护"
+        case .exposed: "对外暴露"
+        case .devService: "开发服务"
+        case .database: "数据库"
+        case .local: "本地监听"
+        case .other: "其他端口"
+        }
+    }
+
+    public var priority: Int {
+        switch self {
+        case .protected: 0
+        case .exposed: 1
+        case .devService: 2
+        case .database: 3
+        case .local: 4
+        case .other: 5
+        }
+    }
+
+    public static func classify(port: ListeningPort, processKind: ProcessKind) -> PortCategory {
+        if port.port < 1024 {
+            return .protected
+        }
+        if port.isWildcard {
+            return .exposed
+        }
+        if processKind == .database || knownDatabasePorts.contains(port.port) {
+            return .database
+        }
+        if processKind == .devServer || knownDevelopmentPorts.contains(port.port) {
+            return .devService
+        }
+        if port.isLocalOnly {
+            return .local
+        }
+        return .other
+    }
+
+    private static let knownDevelopmentPorts: Set<Int> = [
+        3000, 3001, 4173, 5000, 5173, 8000, 8080
+    ]
+
+    private static let knownDatabasePorts: Set<Int> = [
+        3306, 5432, 6379, 9200, 27017
+    ]
+}
+
 public struct RawProcess: Equatable, Identifiable, Hashable, Sendable {
     public let pid: Int32
     public let ppid: Int32
@@ -118,6 +203,7 @@ public struct DevProcess: Equatable, Identifiable, Hashable, Sendable {
     public let projectPath: String?
     public let projectName: String
     public let listeningPorts: [Int]
+    public let listeningPortDetails: [ListeningPort]
     public let source: ProcessSource
     public let kind: ProcessKind
     public let safety: SafetyLevel
@@ -136,6 +222,7 @@ public struct DevProcess: Equatable, Identifiable, Hashable, Sendable {
         projectPath: String?,
         projectName: String,
         listeningPorts: [Int],
+        listeningPortDetails: [ListeningPort] = [],
         source: ProcessSource,
         kind: ProcessKind,
         safety: SafetyLevel,
@@ -145,6 +232,9 @@ public struct DevProcess: Equatable, Identifiable, Hashable, Sendable {
         self.projectPath = projectPath
         self.projectName = projectName
         self.listeningPorts = listeningPorts
+        self.listeningPortDetails = listeningPortDetails.isEmpty
+            ? listeningPorts.map { ListeningPort(port: $0, endpoint: ":\($0)") }
+            : listeningPortDetails
         self.source = source
         self.kind = kind
         self.safety = safety
