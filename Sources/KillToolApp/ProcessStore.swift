@@ -10,6 +10,14 @@ enum ProcessViewMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum ProcessSortMode: String, CaseIterable, Identifiable {
+    case `default` = "默认"
+    case cpu = "CPU"
+    case memory = "内存"
+
+    var id: String { rawValue }
+}
+
 struct ProcessSection: Identifiable {
     let id: String
     let title: String
@@ -26,19 +34,23 @@ struct ProcessRowItem: Identifiable {
 
 @MainActor
 final class ProcessStore: ObservableObject {
-    static let autoRefreshInterval: TimeInterval = 60
+    static let autoRefreshInterval: TimeInterval = 3
+    static let highCPUThreshold: Double = 50
 
     @Published var processes: [DevProcess] = []
     @Published var selectedPIDs: Set<Int32> = []
     @Published var query = ""
     @Published var viewMode: ProcessViewMode = .source
+    @Published var sortMode: ProcessSortMode = .default
     @Published var isRefreshing = false
     @Published var lastActionSummary: String?
     @Published var lastScanError: String?
+    @Published private(set) var hasLoadedOnce = false
 
     private let scanner: any ProcessScanning
     private let controller: ProcessController
     private var refreshTimer: Timer?
+    private var previousSamples: [Int32: CPUSampler.Sample] = [:]
 
     init(scanner: any ProcessScanning = ProcessScanner(), controller: ProcessController = ProcessController()) {
         self.scanner = scanner
@@ -114,10 +126,35 @@ final class ProcessStore: ObservableObject {
             let result = scanner.scanDetailed()
 
             await MainActor.run {
-                self.processes = result.processes
-                self.selectedPIDs = self.selectedPIDs.intersection(Set(result.processes.map(\.pid)))
+                let now = Date()
+                let enriched = result.processes.map { process -> DevProcess in
+                    var copy = process
+                    copy.instantaneousCPUPercent = CPUSampler.instantaneousCPU(
+                        previous: self.previousSamples[process.pid],
+                        currentCPUTime: process.raw.cpuTimeSeconds,
+                        startedAt: process.raw.startedAt,
+                        now: now
+                    )
+                    return copy
+                }
+
+                self.processes = enriched
+                self.previousSamples = Dictionary(
+                    uniqueKeysWithValues: enriched.map { process in
+                        (
+                            process.pid,
+                            CPUSampler.Sample(
+                                cpuTimeSeconds: process.raw.cpuTimeSeconds,
+                                wallClock: now,
+                                startedAt: process.raw.startedAt
+                            )
+                        )
+                    }
+                )
+                self.selectedPIDs = self.selectedPIDs.intersection(Set(enriched.map(\.pid)))
                 self.lastScanError = Self.scanErrorSummary(for: result.errors, processCount: result.processes.count)
                 self.isRefreshing = false
+                self.hasLoadedOnce = true
             }
         }
     }
@@ -218,7 +255,7 @@ final class ProcessStore: ObservableObject {
                 id: source.rawValue,
                 title: source.displayName,
                 subtitle: "\(items.count) 个进程",
-                rows: treeRows(for: items)
+                rows: rows(for: items)
             )
         }
     }
@@ -233,7 +270,7 @@ final class ProcessStore: ObservableObject {
                     id: project,
                     title: project,
                     subtitle: sources.isEmpty ? "\(items.count) 个进程" : "\(items.count) 个进程 · \(sources)",
-                    rows: treeRows(for: items.sorted { $0.pid < $1.pid })
+                    rows: rows(for: items.sorted { $0.pid < $1.pid })
                 )
             }
     }
@@ -242,9 +279,10 @@ final class ProcessStore: ObservableObject {
         PortCategory.allCases
             .sorted { $0.priority < $1.priority }
             .compactMap { category in
-                let items = filteredProcesses
+                let filtered = filteredProcesses
                     .filter { portCategories(for: $0).contains(category) }
-                    .sorted { lhs, rhs in
+                let items = sortMode == .default
+                    ? filtered.sorted { lhs, rhs in
                         let lhsPort = firstPort(in: category, for: lhs) ?? Int.max
                         let rhsPort = firstPort(in: category, for: rhs) ?? Int.max
                         if lhsPort != rhsPort {
@@ -252,6 +290,7 @@ final class ProcessStore: ObservableObject {
                         }
                         return lhs.pid < rhs.pid
                     }
+                    : filtered.sorted { sortMetric(for: $0) > sortMetric(for: $1) }
 
                 guard !items.isEmpty else {
                     return nil
@@ -270,6 +309,26 @@ final class ProcessStore: ObservableObject {
                     rows: items.map { ProcessRowItem(process: $0, depth: 0) }
                 )
             }
+    }
+
+    private func sortMetric(for process: DevProcess) -> Double {
+        switch sortMode {
+        case .default:
+            return 0
+        case .cpu:
+            return process.instantaneousCPUPercent ?? process.cpuPercent
+        case .memory:
+            return process.memoryPercent
+        }
+    }
+
+    private func rows(for items: [DevProcess]) -> [ProcessRowItem] {
+        guard sortMode != .default else {
+            return treeRows(for: items)
+        }
+        return items
+            .sorted { sortMetric(for: $0) > sortMetric(for: $1) }
+            .map { ProcessRowItem(process: $0, depth: 0) }
     }
 
     private func treeRows(for items: [DevProcess]) -> [ProcessRowItem] {

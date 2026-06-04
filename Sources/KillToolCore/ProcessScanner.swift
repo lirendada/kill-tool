@@ -35,7 +35,7 @@ public final class ProcessScanner: @unchecked Sendable, ProcessScanning {
             CaptureRequest(
                 label: "ps",
                 executable: "/bin/ps",
-                arguments: ["-axo", "pid=,ppid=,pgid=,user=,etime=,%cpu=,%mem=,command="]
+                arguments: ["-axo", "pid=,ppid=,pgid=,user=,etime=,%cpu=,%mem=,time=,command="]
             ),
             CaptureRequest(
                 label: "cwd lsof",
@@ -110,7 +110,8 @@ public final class ProcessScanner: @unchecked Sendable, ProcessScanning {
                 workingDirectory: cwdByPID[raw.pid] ?? raw.workingDirectory,
                 startedAt: raw.startedAt,
                 cpuPercent: raw.cpuPercent,
-                memoryPercent: raw.memoryPercent
+                memoryPercent: raw.memoryPercent,
+                cpuTimeSeconds: raw.cpuTimeSeconds
             )
         }
         let rawIndex = Dictionary(uniqueKeysWithValues: rawProcesses.map { ($0.pid, $0) })
@@ -161,8 +162,8 @@ public final class ProcessScanner: @unchecked Sendable, ProcessScanning {
     }
 
     public static func parsePSRow(_ row: String, now: Date = Date()) -> RawProcess? {
-        let parts = row.split(separator: " ", maxSplits: 7, omittingEmptySubsequences: true)
-        guard parts.count == 8,
+        let parts = row.split(separator: " ", maxSplits: 8, omittingEmptySubsequences: true)
+        guard parts.count == 9,
               let pid = Int32(parts[0]),
               let ppid = Int32(parts[1]),
               let pgid = Int32(parts[2]) else {
@@ -173,7 +174,8 @@ public final class ProcessScanner: @unchecked Sendable, ProcessScanning {
         let elapsed = String(parts[4])
         let cpuPercent = Double(parts[5]) ?? 0
         let memoryPercent = Double(parts[6]) ?? 0
-        let commandLine = String(parts[7])
+        let cpuTimeSeconds = parseCPUTimeSeconds(String(parts[7]))
+        let commandLine = String(parts[8])
         let executableName = deriveExecutableName(from: commandLine)
         let startedAt = now.addingTimeInterval(-TimeInterval(parseElapsedSeconds(elapsed)))
 
@@ -187,7 +189,8 @@ public final class ProcessScanner: @unchecked Sendable, ProcessScanning {
             workingDirectory: nil,
             startedAt: startedAt,
             cpuPercent: cpuPercent,
-            memoryPercent: memoryPercent
+            memoryPercent: memoryPercent,
+            cpuTimeSeconds: cpuTimeSeconds
         )
     }
 
@@ -310,6 +313,35 @@ public final class ProcessScanner: @unchecked Sendable, ProcessScanning {
         return days * 24 * 3600 + seconds
     }
 
+    public static func parseCPUTimeSeconds(_ value: String) -> Double {
+        var remaining = value.trimmingCharacters(in: .whitespaces)
+        guard !remaining.isEmpty else {
+            return 0
+        }
+
+        var days = 0
+        if let dash = remaining.firstIndex(of: "-") {
+            days = Int(remaining[..<dash]) ?? 0
+            remaining = String(remaining[remaining.index(after: dash)...])
+        }
+
+        let parts = remaining.split(separator: ":").map(String.init)
+        guard let last = parts.last, let seconds = Double(last) else {
+            return 0
+        }
+
+        var total = seconds
+        if parts.count >= 2 {
+            total += (Double(parts[parts.count - 2]) ?? 0) * 60
+        }
+        if parts.count >= 3 {
+            total += (Double(parts[parts.count - 3]) ?? 0) * 3600
+        }
+        total += Double(days) * 24 * 3600
+
+        return total
+    }
+
     private static func parsePort(from endpoint: String) -> Int? {
         guard let colon = endpoint.lastIndex(of: ":") else {
             return nil
@@ -353,5 +385,49 @@ public final class ProcessScanner: @unchecked Sendable, ProcessScanning {
         } catch {
             return CaptureResult(output: "", error: "\(request.label): \(error)")
         }
+    }
+}
+
+public enum CPUSampler {
+    public struct Sample: Equatable, Sendable {
+        public let cpuTimeSeconds: Double
+        public let wallClock: Date
+        public let startedAt: Date
+
+        public init(cpuTimeSeconds: Double, wallClock: Date, startedAt: Date) {
+            self.cpuTimeSeconds = cpuTimeSeconds
+            self.wallClock = wallClock
+            self.startedAt = startedAt
+        }
+    }
+
+    /// Derives instantaneous CPU usage (percent) from the change in accumulated
+    /// CPU time between two samples. Returns nil when no usable previous sample
+    /// exists so callers can fall back to the lifetime average.
+    public static func instantaneousCPU(
+        previous: Sample?,
+        currentCPUTime: Double,
+        startedAt: Date,
+        now: Date
+    ) -> Double? {
+        guard let previous else {
+            return nil
+        }
+        // A different start time means the PID was reused by another process.
+        guard previous.startedAt == startedAt else {
+            return nil
+        }
+
+        let elapsed = now.timeIntervalSince(previous.wallClock)
+        guard elapsed > 0 else {
+            return nil
+        }
+
+        let delta = currentCPUTime - previous.cpuTimeSeconds
+        guard delta >= 0 else {
+            return nil
+        }
+
+        return max(0, delta / elapsed * 100)
     }
 }

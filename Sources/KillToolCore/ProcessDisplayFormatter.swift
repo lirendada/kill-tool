@@ -42,7 +42,7 @@ public enum ProcessDisplayFormatter {
     }
 
     public static func cpuBadgeText(for process: DevProcess) -> String {
-        "CPU \(percentText(process.cpuPercent))"
+        "CPU \(percentText(process.instantaneousCPUPercent ?? process.cpuPercent))"
     }
 
     public static func memoryBadgeText(for process: DevProcess) -> String {

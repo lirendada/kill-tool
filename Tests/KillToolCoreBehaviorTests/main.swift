@@ -8,6 +8,20 @@ func expectEqual<T: Equatable>(_ actual: T, _ expected: T, _ message: String) {
     }
 }
 
+func expectClose(_ actual: Double, _ expected: Double, _ message: String, tolerance: Double = 0.0001) {
+    if abs(actual - expected) > tolerance {
+        fputs("FAIL: \(message)\nExpected: \(expected)\nActual: \(actual)\n", stderr)
+        Foundation.exit(1)
+    }
+}
+
+func expectNil(_ value: Double?, _ message: String) {
+    if value != nil {
+        fputs("FAIL: \(message)\nExpected: nil\nActual: \(String(describing: value))\n", stderr)
+        Foundation.exit(1)
+    }
+}
+
 func testClaudeCodeTakesPriorityOverTerminalAncestor() {
     let terminal = RawProcess(
         pid: 100,
@@ -243,7 +257,7 @@ func testProjectResolverParsesQuotedPathsContainingSpaces() throws {
 
 func testProcessScannerParsesPSRows() {
     let now = Date(timeIntervalSince1970: 1_000)
-    let row = "39869 39849 39849 Zhuanz 02:00 2.5 1.2 node /Users/Zhuanz/sync/code/vibe-projects/my-blog/node_modules/.bin/next dev --turbopack"
+    let row = "39869 39849 39849 Zhuanz 02:00 2.5 1.2 1:58.32 node /Users/Zhuanz/sync/code/vibe-projects/my-blog/node_modules/.bin/next dev --turbopack"
 
     guard let raw = ProcessScanner.parsePSRow(row, now: now) else {
         fputs("FAIL: ps row should parse\n", stderr)
@@ -259,6 +273,7 @@ func testProcessScannerParsesPSRows() {
     expectEqual(raw.startedAt, Date(timeIntervalSince1970: 880), "ps parser should derive start time from elapsed time")
     expectEqual(raw.cpuPercent, 2.5, "ps parser should read CPU percentage")
     expectEqual(raw.memoryPercent, 1.2, "ps parser should read memory percentage")
+    expectClose(raw.cpuTimeSeconds, 118.32, "ps parser should read accumulated CPU time in seconds")
 }
 
 func testProcessScannerParsesListeningPortsFromLsof() {
@@ -478,7 +493,8 @@ func makeDisplayProcess(
     projectName: String = "kill-tool",
     kind: ProcessKind = .devServer,
     cpuPercent: Double = 0,
-    memoryPercent: Double = 0
+    memoryPercent: Double = 0,
+    instantaneousCPUPercent: Double? = nil
 ) -> DevProcess {
     DevProcess(
         raw: RawProcess(
@@ -498,7 +514,8 @@ func makeDisplayProcess(
         listeningPorts: [],
         source: .codex,
         kind: kind,
-        safety: .safe
+        safety: .safe,
+        instantaneousCPUPercent: instantaneousCPUPercent
     )
 }
 
@@ -576,6 +593,62 @@ func testDisplayFormatterFormatsSeparateResourceBadges() {
     expectEqual(ProcessDisplayFormatter.memoryBadgeText(for: process), "内存 1.2%", "memory badge should be independently formatted")
 }
 
+func testCPUTimeParsing() {
+    expectClose(ProcessScanner.parseCPUTimeSeconds("1:58.32"), 118.32, "mm:ss.ff cputime should parse to seconds")
+    expectClose(ProcessScanner.parseCPUTimeSeconds("934:15.57"), 56055.57, "large minute counts should parse")
+    expectClose(ProcessScanner.parseCPUTimeSeconds("1:02:03.5"), 3723.5, "hh:mm:ss.ff cputime should parse")
+    expectClose(ProcessScanner.parseCPUTimeSeconds("1-02:03:04"), 93784, "dd-hh:mm:ss cputime should parse")
+    expectClose(ProcessScanner.parseCPUTimeSeconds("0:00.00"), 0, "zero cputime should parse to zero")
+    expectClose(ProcessScanner.parseCPUTimeSeconds(""), 0, "empty cputime should be zero")
+    expectClose(ProcessScanner.parseCPUTimeSeconds("garbage"), 0, "unparseable cputime should be zero")
+}
+
+func testInstantaneousCPUDiff() {
+    let started = Date(timeIntervalSince1970: 1_000)
+    let t0 = Date(timeIntervalSince1970: 2_000)
+    let later = t0.addingTimeInterval(2)
+    let sample = CPUSampler.Sample(cpuTimeSeconds: 10.0, wallClock: t0, startedAt: started)
+
+    expectNil(
+        CPUSampler.instantaneousCPU(previous: nil, currentCPUTime: 10.0, startedAt: started, now: later),
+        "no previous sample should fall back to nil"
+    )
+    expectClose(
+        CPUSampler.instantaneousCPU(previous: sample, currentCPUTime: 10.5, startedAt: started, now: later) ?? -1,
+        25.0,
+        "0.5s cpu-time over 2s wall clock should be 25 percent"
+    )
+    expectNil(
+        CPUSampler.instantaneousCPU(previous: sample, currentCPUTime: 20.0, startedAt: Date(timeIntervalSince1970: 9_999), now: later),
+        "different start time (PID reuse) should fall back to nil"
+    )
+    expectNil(
+        CPUSampler.instantaneousCPU(previous: sample, currentCPUTime: 10.5, startedAt: started, now: t0),
+        "non-positive elapsed should fall back to nil"
+    )
+    expectNil(
+        CPUSampler.instantaneousCPU(previous: sample, currentCPUTime: 9.0, startedAt: started, now: later),
+        "negative cpu-time delta should fall back to nil"
+    )
+}
+
+func testFormatterPrefersInstantaneousCPU() {
+    let withInstant = makeDisplayProcess(
+        executableName: "node",
+        commandLine: "npm run dev",
+        cpuPercent: 2.5,
+        instantaneousCPUPercent: 9.0
+    )
+    let withoutInstant = makeDisplayProcess(
+        executableName: "node",
+        commandLine: "npm run dev",
+        cpuPercent: 2.5
+    )
+
+    expectEqual(ProcessDisplayFormatter.cpuBadgeText(for: withInstant), "CPU 9.0%", "cpu badge should prefer instantaneous percent")
+    expectEqual(ProcessDisplayFormatter.cpuBadgeText(for: withoutInstant), "CPU 2.5%", "cpu badge should fall back to lifetime average")
+}
+
 testClaudeCodeTakesPriorityOverTerminalAncestor()
 testCodexSourceIsDetectedFromAncestorPath()
 testVSCodeSourceIsDetectedFromPtyHostAncestor()
@@ -599,5 +672,8 @@ testDisplayFormatterExtractsReadableDevelopmentCommands()
 testDisplayFormatterExtractsMCPCommandsAndFallsBackToExecutableName()
 testDisplayFormatterFormatsResourcePercentages()
 testDisplayFormatterFormatsSeparateResourceBadges()
+testCPUTimeParsing()
+testInstantaneousCPUDiff()
+testFormatterPrefersInstantaneousCPU()
 
 print("KillToolCoreBehaviorTests passed")

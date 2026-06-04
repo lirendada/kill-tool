@@ -83,6 +83,16 @@ struct ProcessDashboardView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 210)
 
+                Picker("", selection: $store.sortMode) {
+                    ForEach(ProcessSortMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: 90)
+                .help("排序方式(默认 / CPU / 内存)")
+
                 TextField("搜索进程、端口、分类或项目", text: $store.query)
                     .textFieldStyle(.roundedBorder)
             }
@@ -93,7 +103,9 @@ struct ProcessDashboardView: View {
     private var content: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
-                if store.sections.isEmpty {
+                if !store.hasLoadedOnce {
+                    loadingState
+                } else if store.sections.isEmpty {
                     emptyState
                 } else {
                     ForEach(store.sections) { section in
@@ -103,6 +115,16 @@ struct ProcessDashboardView: View {
             }
             .padding(12)
         }
+    }
+
+    private var loadingState: some View {
+        VStack(spacing: 8) {
+            ProgressView()
+            Text("正在扫描进程…")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 360)
     }
 
     private var emptyState: some View {

@@ -155,6 +155,9 @@ struct ProcessRowView: View {
         if store.selectedPIDs.contains(process.pid) {
             return AnyShapeStyle(Color.accentColor.opacity(0.12))
         }
+        if (process.instantaneousCPUPercent ?? process.cpuPercent) >= ProcessStore.highCPUThreshold {
+            return AnyShapeStyle(Color.orange.opacity(0.16))
+        }
         return AnyShapeStyle(Color(nsColor: .textBackgroundColor).opacity(0.45))
     }
 

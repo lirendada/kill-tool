@@ -170,6 +170,7 @@ public struct RawProcess: Equatable, Identifiable, Hashable, Sendable {
     public let startedAt: Date
     public let cpuPercent: Double
     public let memoryPercent: Double
+    public let cpuTimeSeconds: Double
 
     public var id: Int32 { pid }
 
@@ -183,7 +184,8 @@ public struct RawProcess: Equatable, Identifiable, Hashable, Sendable {
         workingDirectory: String?,
         startedAt: Date,
         cpuPercent: Double = 0,
-        memoryPercent: Double = 0
+        memoryPercent: Double = 0,
+        cpuTimeSeconds: Double = 0
     ) {
         self.pid = pid
         self.ppid = ppid
@@ -195,6 +197,7 @@ public struct RawProcess: Equatable, Identifiable, Hashable, Sendable {
         self.startedAt = startedAt
         self.cpuPercent = cpuPercent
         self.memoryPercent = memoryPercent
+        self.cpuTimeSeconds = cpuTimeSeconds
     }
 }
 
@@ -208,6 +211,7 @@ public struct DevProcess: Equatable, Identifiable, Hashable, Sendable {
     public let kind: ProcessKind
     public let safety: SafetyLevel
     public var children: [DevProcess]
+    public var instantaneousCPUPercent: Double?
 
     public var id: Int32 { raw.pid }
     public var pid: Int32 { raw.pid }
@@ -226,7 +230,8 @@ public struct DevProcess: Equatable, Identifiable, Hashable, Sendable {
         source: ProcessSource,
         kind: ProcessKind,
         safety: SafetyLevel,
-        children: [DevProcess] = []
+        children: [DevProcess] = [],
+        instantaneousCPUPercent: Double? = nil
     ) {
         self.raw = raw
         self.projectPath = projectPath
@@ -239,5 +244,6 @@ public struct DevProcess: Equatable, Identifiable, Hashable, Sendable {
         self.kind = kind
         self.safety = safety
         self.children = children
+        self.instantaneousCPUPercent = instantaneousCPUPercent
     }
 }
